@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    Every repository: health, package count, vulnerabilities, outdated, license issues; plus cross-repo duplicates.
+    Scans one repository now: reads its manifest and asks the registries.
 .EXAMPLE
-    ./scripts/Get-DependencyReport.ps1
+    ./scripts/Start-Scan.ps1 -Repo "MyRepo"
 #>
 [CmdletBinding()]
 param(
-
+    [Parameter(Mandatory)][string]$Repo
 )
 $ErrorActionPreference = 'Stop'
 $CadenceApi = if ($env:CADENCE_API) { $env:CADENCE_API } else { 'http://127.0.0.1:3800' }
@@ -16,4 +16,5 @@ function Get-Api($path) { Invoke-RestMethod -Uri "$CadenceApi$path" -Headers $he
 function Post-Api($path, $payload) { Invoke-RestMethod -Uri "$CadenceApi$path" -Method Post -Headers $headers -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Depth 8) -TimeoutSec 600 }
 function Esc($s) { [uri]::EscapeDataString([string]$s) }
 function Out-Json($o, $d = 6) { ConvertTo-Json -InputObject $o -Depth $d }
-Get-Api '/api/plugins/dependency-inspector/overview' | ConvertTo-Json -Depth 6
+$r = Post-Api "/api/plugins/dependency-inspector/repos/$(Esc $Repo)/scan" @{}
+[pscustomobject]@{ repo = $Repo; health = $r.health; packages = @($r.packages).Count; vulnerabilities = @($r.vulnerabilities).Count; scannedAt = $r.scannedAt } | ConvertTo-Json

@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Packages behind their latest in one repository, grouped major / minor / patch.
+    Installs every minor and patch update of a repository in one go (majors are left alone).
 .EXAMPLE
-    ./scripts/Get-Outdated.ps1 -Repo "MyRepo" -Kind major
+    ./scripts/Update-SafePackages.ps1 -Repo "MyRepo"
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Repo,
-    [ValidateSet('all','major','minor','patch')][string]$Kind = 'all'
+    [switch]$IncludeMajor
 )
 $ErrorActionPreference = 'Stop'
 $CadenceApi = if ($env:CADENCE_API) { $env:CADENCE_API } else { 'http://127.0.0.1:3800' }
@@ -18,5 +18,7 @@ function Post-Api($path, $payload) { Invoke-RestMethod -Uri "$CadenceApi$path" -
 function Esc($s) { [uri]::EscapeDataString([string]$s) }
 function Out-Json($o, $d = 6) { ConvertTo-Json -InputObject $o -Depth $d }
 $d = Get-Api "/api/plugins/dependency-inspector/repos/$(Esc $Repo)/detail"
-$rows = @($d.packages | Where-Object { ($_.updateType -in @('major','minor','patch')) -and ($Kind -eq 'all' -or $_.updateType -eq $Kind) } | Select-Object name, installedVersion, latestVersion, updateType, isDev, license, deprecated)
-Out-Json $rows 4
+$kinds = if ($IncludeMajor) { @('major','minor','patch') } else { @('minor','patch') }
+$list = @($d.packages | Where-Object { $_.updateType -in $kinds -and $_.latestVersion -ne 'unknown' } | ForEach-Object { @{ name = $_.name; version = $_.latestVersion } })
+if (-not $list.Count) { Write-Output '{"ok":true,"updated":0,"note":"nothing to update"}'; exit 0 }
+Post-Api "/api/plugins/dependency-inspector/repos/$(Esc $Repo)/update-many" @{ packages = $list } | ConvertTo-Json -Depth 5

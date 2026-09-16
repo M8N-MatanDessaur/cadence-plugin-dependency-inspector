@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-    Every repository: health, package count, vulnerabilities, outdated, license issues; plus cross-repo duplicates.
+    One repository: every package (installed, latest, license, dev, deprecated), every advisory, health, package manager.
 .EXAMPLE
-    ./scripts/Get-DependencyReport.ps1
+    ./scripts/Get-RepoDependencies.ps1 -Repo "MyRepo"
 #>
 [CmdletBinding()]
 param(
-
+    [Parameter(Mandatory)][string]$Repo
 )
 $ErrorActionPreference = 'Stop'
 $CadenceApi = if ($env:CADENCE_API) { $env:CADENCE_API } else { 'http://127.0.0.1:3800' }
@@ -16,4 +16,4 @@ function Get-Api($path) { Invoke-RestMethod -Uri "$CadenceApi$path" -Headers $he
 function Post-Api($path, $payload) { Invoke-RestMethod -Uri "$CadenceApi$path" -Method Post -Headers $headers -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Depth 8) -TimeoutSec 600 }
 function Esc($s) { [uri]::EscapeDataString([string]$s) }
 function Out-Json($o, $d = 6) { ConvertTo-Json -InputObject $o -Depth $d }
-Get-Api '/api/plugins/dependency-inspector/overview' | ConvertTo-Json -Depth 6
+Get-Api "/api/plugins/dependency-inspector/repos/$(Esc $Repo)/detail" | ConvertTo-Json -Depth 6

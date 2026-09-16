@@ -15,6 +15,11 @@ const configPath = path.join(__dirname, 'config.json');
 var scanCache = {};  // { repoName: { timestamp, data } }
 var CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// The last scan of every repo is kept on disk, so a restart does not empty the screens.
+var cacheFile = path.join(__dirname, 'scan-cache.json');
+try { scanCache = JSON.parse(fs.readFileSync(cacheFile, 'utf8')) || {}; } catch (_) { scanCache = {}; }
+function persistCache() { try { fs.writeFileSync(cacheFile, JSON.stringify(scanCache), 'utf8'); } catch (_) {} }
+
 // ── Config helpers ──────────────────────────────────────────────────────────
 
 function getPluginConfig() {
@@ -46,7 +51,7 @@ function httpsGet(urlStr, timeout) {
       hostname: url.hostname,
       path: url.pathname + url.search,
       method: 'GET',
-      headers: { 'Accept': 'application/json', 'User-Agent': 'symphonee-dependency-inspector/1.0' },
+      headers: { 'Accept': 'application/json', 'User-Agent': 'cadence-dependency-inspector/1.0' },
       timeout: timeout || 10000
     };
     var req = https.request(opts, function(resp) {
@@ -274,7 +279,7 @@ async function checkVulnerabilities(packages) {
         headers: {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(postData),
-          'User-Agent': 'symphonee-dependency-inspector/1.0'
+          'User-Agent': 'cadence-dependency-inspector/1.0'
         },
         timeout: 15000
       };
@@ -293,10 +298,20 @@ async function checkVulnerabilities(packages) {
     });
 
     if (result.status === 200 && typeof result.data === 'object') {
+      lastAdvisoryCheck = { ok: true, at: new Date().toISOString() };
       return result.data;
     }
-  } catch (_) {}
+    lastAdvisoryCheck = { ok: false, at: new Date().toISOString(), error: 'registry answered ' + result.status };
+  } catch (e) { lastAdvisoryCheck = { ok: false, at: new Date().toISOString(), error: e.message }; }
   return {};
+}
+// The advisory service answers 429 or times out under a scan-all; one retry after a pause gets most of them back.
+var lastAdvisoryCheck = { ok: null };
+async function checkVulnerabilitiesWithRetry(packages) {
+  var first = await checkVulnerabilities(packages);
+  if (lastAdvisoryCheck.ok !== false) return first;
+  await new Promise(function (r) { setTimeout(r, 1500); });
+  return checkVulnerabilities(packages);
 }
 
 // ── Core scanning logic ─────────────────────────────────────────────────────
@@ -310,6 +325,7 @@ async function scanRepo(repoName, repoPath) {
     hasCsproj: false,
     packages: [],
     vulnerabilities: [],
+    advisoriesChecked: null,
     health: 100,
     error: null
   };
@@ -388,7 +404,8 @@ async function scanRepo(repoName, repoPath) {
     }
 
     // Check vulnerabilities
-    var vulnData = await checkVulnerabilities(allPackages);
+    var vulnData = await checkVulnerabilitiesWithRetry(allPackages);
+    result.advisoriesChecked = lastAdvisoryCheck.ok !== false;
     // vulnData is keyed by advisory ID, each has module_name, severity, title, url, etc.
     if (vulnData && typeof vulnData === 'object') {
       var advisoryKeys = Object.keys(vulnData);
@@ -524,7 +541,35 @@ function getRepos(getConfig) {
 
 // ── Route Registration ──────────────────────────────────────────────────────
 
-module.exports = function ({ addPrefixRoute, json, readBody, getConfig }) {
+
+// ---- Attention: what the Plugins home shows on this app's tile. Reads the plugin's own
+// routes over loopback (they carry their caches), never writes, answers within a minute.
+const __attention = { value: null, until: 0 };
+function __selfGet(req, path, timeoutMs) {
+  return new Promise((resolve) => {
+    const host = req.headers.host || `127.0.0.1:${process.env.CADENCE_PORT || 3801}`;
+    const lib = require('http');
+    const r = lib.get({ host: host.split(':')[0], port: Number(host.split(':')[1] || 80), path, headers: { 'x-cadence-internal': '1' } }, (resp) => { let d = ''; resp.on('data', (c) => { d += c; }); resp.on('end', () => { try { resolve(resp.statusCode < 400 ? JSON.parse(d) : null); } catch (_) { resolve(null); } }); });
+    r.on('error', () => resolve(null));
+    r.setTimeout(timeoutMs || 45000, () => { r.destroy(); resolve(null); });
+  });
+}
+function __attentionOut(items) {
+  const rank = { error: 3, warn: 2, warning: 2, info: 1 };
+  const list = (items || []).filter((i) => i && i.text).map((i) => ({ level: i.level === 'warning' ? 'warn' : (i.level || 'info'), text: String(i.text) }));
+  const level = list.reduce((top, i) => (rank[i.level] > rank[top] ? i.level : top), list.length ? 'info' : 'ok');
+  return { count: list.length, level, items: list, readAt: new Date().toISOString() };
+}
+async function __attentionHandler(req, res, url, compute, json) {
+  if (__attention.value && __attention.until > Date.now() && url.searchParams.get('refresh') !== '1') return json(res, __attention.value);
+  let out;
+  try { out = __attentionOut(await compute(req)); } catch (e) { out = { count: 0, level: 'ok', items: [], error: e.message, readAt: new Date().toISOString() }; }
+  __attention.value = out; __attention.until = Date.now() + 60000;
+  return json(res, out);
+}
+
+module.exports = function ({ addRoute, addPrefixRoute, json, readBody, getConfig }) {
+  addRoute('GET', '/attention', (req, res, url) => __attentionHandler(req, res, url, async (req) => { const o = await __selfGet(req, '/api/plugins/dependency-inspector/overview'); const t = o && o.totals; if (!t) return []; const out = []; if (t.critical) out.push({ level: 'error', text: `${t.critical} critical vulnerabilit${t.critical === 1 ? 'y' : 'ies'}.` }); if (t.high) out.push({ level: 'error', text: `${t.high} high vulnerabilit${t.high === 1 ? 'y' : 'ies'}.` }); if (t.moderate) out.push({ level: 'warn', text: `${t.moderate} moderate vulnerabilit${t.moderate === 1 ? 'y' : 'ies'}.` }); if (t.deprecated) out.push({ level: 'warn', text: `${t.deprecated} deprecated package${t.deprecated === 1 ? '' : 's'}.` }); if (t.licenseIssues) out.push({ level: 'info', text: `${t.licenseIssues} license issue${t.licenseIssues === 1 ? '' : 's'}.` }); return out; }, json));
 
   addPrefixRoute(async (req, res, url, subpath) => {
     var method = req.method;
@@ -559,6 +604,7 @@ module.exports = function ({ addPrefixRoute, json, readBody, getConfig }) {
             scannedAt: hasScan ? cached.data.scannedAt : null,
             health: hasScan ? cached.data.health : null,
             packageCount: hasScan ? cached.data.packages.length : null,
+            hasManifest: fs.existsSync(path.join(r.path, 'package.json')) || (function () { try { return fs.readdirSync(r.path).some(function (f) { return /\.csproj$/i.test(f); }); } catch (_) { return false; } })(),
             vulnCount: hasScan ? cached.data.vulnerabilities.length : null,
             outdatedCount: hasScan ? cached.data.packages.filter(function(p) {
               return p.updateType === 'major' || p.updateType === 'minor' || p.updateType === 'patch';
@@ -584,6 +630,7 @@ module.exports = function ({ addPrefixRoute, json, readBody, getConfig }) {
             error: scanResult.error
           });
         }
+        persistCache();
         return json(res, { ok: true, repos: results });
       }
 
@@ -597,6 +644,7 @@ module.exports = function ({ addPrefixRoute, json, readBody, getConfig }) {
 
         var scanResult2 = await scanRepo(repo.name, repo.path);
         scanCache[repo.name] = { timestamp: Date.now(), data: scanResult2 };
+        persistCache();
         return json(res, scanResult2);
       }
 
@@ -742,32 +790,155 @@ module.exports = function ({ addPrefixRoute, json, readBody, getConfig }) {
         if (!pkgName) return json(res, { error: 'package name required' }, 400);
 
         try {
-          var { execSync } = require('child_process');
+          var { spawnSync } = require('child_process');
           // Detect package manager
           var useYarn = fs.existsSync(path.join(repo.path, 'yarn.lock'));
-          var cmd = useYarn
-            ? 'yarn add ' + pkgName + '@' + version
-            : 'npm install ' + pkgName + '@' + version;
+          var exe = useYarn ? 'yarn' : 'npm';
+          var args = useYarn
+            ? ['add', pkgName + '@' + version]
+            : ['install', pkgName + '@' + version];
 
           // Check if it's a devDependency
           try {
             var pkgJson = JSON.parse(fs.readFileSync(path.join(repo.path, 'package.json'), 'utf8'));
             if (pkgJson.devDependencies && pkgJson.devDependencies[pkgName] && !(pkgJson.dependencies && pkgJson.dependencies[pkgName])) {
-              cmd = useYarn
-                ? 'yarn add --dev ' + pkgName + '@' + version
-                : 'npm install --save-dev ' + pkgName + '@' + version;
+              args = useYarn
+                ? ['add', '--dev', pkgName + '@' + version]
+                : ['install', '--save-dev', pkgName + '@' + version];
             }
           } catch (_) {}
 
-          execSync(cmd, { cwd: repo.path, encoding: 'utf8', timeout: 120000, stdio: ['pipe', 'pipe', 'pipe'] });
+          var result = spawnSync(exe, args, {
+            cwd: repo.path,
+            encoding: 'utf8',
+            timeout: 120000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+            windowsHide: true,
+            shell: process.platform === 'win32',
+          });
+          if (result.error || result.status !== 0) {
+            throw new Error((result.stderr || result.stdout || (result.error && result.error.message) || 'Install failed').trim());
+          }
 
           // Clear scan cache so next scan picks up the new version
-          delete scanCache[repoName];
+          delete scanCache[repoName]; persistCache();
 
-          return json(res, { ok: true, package: pkgName, version: version, command: cmd });
+          return json(res, { ok: true, package: pkgName, version: version, command: [exe].concat(args).join(' ') });
         } catch (e) {
           return json(res, { error: 'Install failed: ' + (e.stderr || e.message).substring(0, 500) }, 500);
         }
+      }
+
+      // ── 3.0: whole picture in one call ─────────────────────────────────
+      if (subpath === '/overview' && method === 'GET') {
+        var reposO = getRepos(getConfig);
+        var out = { repos: [], totals: { scanned: 0, packages: 0, vulnerabilities: 0, critical: 0, high: 0, moderate: 0, low: 0, major: 0, minor: 0, patch: 0, licenseIssues: 0, deprecated: 0 }, duplicates: [] };
+        var allowedO = getAllowedLicenses();
+        var byPkg = {};
+        for (var oi = 0; oi < reposO.length; oi++) {
+          var ro = reposO[oi];
+          var co = scanCache[ro.name];
+          var has = !!(co && co.data);
+          var row = { name: ro.name, path: ro.path, scanned: has, scannedAt: has ? co.data.scannedAt : null, health: has ? co.data.health : null, packages: has ? co.data.packages.length : 0,
+            hasManifest: fs.existsSync(path.join(ro.path, 'package.json')) || (function () { try { return fs.readdirSync(ro.path).some(function (f) { return /\.csproj$/i.test(f); }); } catch (_) { return false; } })(),
+            vulnerabilities: { total: 0, critical: 0, high: 0, moderate: 0, low: 0 }, outdated: { major: 0, minor: 0, patch: 0 }, licenseIssues: 0, deprecated: 0, advisoriesChecked: has ? co.data.advisoriesChecked !== false : null };
+          if (has) {
+            out.totals.scanned++;
+            out.totals.packages += co.data.packages.length;
+            for (var vi = 0; vi < co.data.vulnerabilities.length; vi++) { var sv = co.data.vulnerabilities[vi].severity; row.vulnerabilities.total++; if (row.vulnerabilities[sv] !== undefined) row.vulnerabilities[sv]++; }
+            for (var pi = 0; pi < co.data.packages.length; pi++) {
+              var pk = co.data.packages[pi];
+              if (row.outdated[pk.updateType] !== undefined) row.outdated[pk.updateType]++;
+              var lic = (pk.license || 'Unknown').toLowerCase();
+              if (lic === 'unknown' || !allowedO.includes(lic)) row.licenseIssues++;
+              if (pk.deprecated) row.deprecated++;
+              (byPkg[pk.name] = byPkg[pk.name] || []).push({ repo: ro.name, version: pk.installedVersion, latest: pk.latestVersion, isDev: pk.isDev });
+            }
+            out.totals.vulnerabilities += row.vulnerabilities.total; out.totals.critical += row.vulnerabilities.critical; out.totals.high += row.vulnerabilities.high; out.totals.moderate += row.vulnerabilities.moderate; out.totals.low += row.vulnerabilities.low;
+            out.totals.major += row.outdated.major; out.totals.minor += row.outdated.minor; out.totals.patch += row.outdated.patch; out.totals.licenseIssues += row.licenseIssues; out.totals.deprecated += row.deprecated;
+          }
+          out.repos.push(row);
+        }
+        var names = Object.keys(byPkg);
+        for (var ni = 0; ni < names.length; ni++) {
+          var inst = byPkg[names[ni]];
+          var versions = {}; for (var ii = 0; ii < inst.length; ii++) versions[inst[ii].version] = true;
+          if (inst.length > 1 && Object.keys(versions).length > 1) out.duplicates.push({ name: names[ni], versions: Object.keys(versions).length, instances: inst });
+        }
+        out.duplicates.sort(function (a, b) { return b.instances.length - a.instances.length; });
+        return json(res, out);
+      }
+
+      // ── 3.0: one repo, everything ──────────────────────────────────────
+      var detailMatch = subpath.match(/^\/repos\/([^/]+)\/detail$/);
+      if (detailMatch && method === 'GET') {
+        var repoNameD = decodeURIComponent(detailMatch[1]);
+        var cd = scanCache[repoNameD];
+        var reposD = getRepos(getConfig);
+        var rd = reposD.find(function (r) { return r.name === repoNameD; });
+        if (!rd) return json(res, { error: 'Repo not found' }, 404);
+        var manifest = fs.existsSync(path.join(rd.path, 'package.json')) ? 'npm' : (function () { try { return fs.readdirSync(rd.path).some(function (f) { return /\.csproj$/i.test(f); }) ? 'nuget' : null; } catch (_) { return null; } })();
+        var manager = fs.existsSync(path.join(rd.path, 'yarn.lock')) ? 'yarn' : fs.existsSync(path.join(rd.path, 'pnpm-lock.yaml')) ? 'pnpm' : fs.existsSync(path.join(rd.path, 'package-lock.json')) ? 'npm' : manifest === 'nuget' ? 'dotnet' : manifest ? 'npm' : null;
+        if (!cd || !cd.data) return json(res, { name: repoNameD, path: rd.path, scanned: false, manifest: manifest, manager: manager, packages: [], vulnerabilities: [], health: null });
+        var allowedD = getAllowedLicenses();
+        var pkgsD = cd.data.packages.map(function (pk) { var lic = (pk.license || 'Unknown').toLowerCase(); return Object.assign({}, pk, { licenseOk: lic !== 'unknown' && allowedD.includes(lic) }); });
+        return json(res, { name: repoNameD, path: rd.path, scanned: true, scannedAt: cd.data.scannedAt, manifest: manifest, manager: manager, health: cd.data.health, packages: pkgsD, vulnerabilities: cd.data.vulnerabilities, advisoriesChecked: cd.data.advisoriesChecked !== false, allowedLicenses: allowedD });
+      }
+
+      // ── 3.0: one package on the registry ───────────────────────────────
+      if (subpath === '/package' && method === 'GET') {
+        var nameQ = url.searchParams.get('name');
+        if (!nameQ) return json(res, { error: 'name required' }, 400);
+        try {
+          var regResp = await httpsGet(getRegistryUrl() + '/' + encodeURIComponent(nameQ).replace('%40', '@'));
+          var reg = regResp && regResp.data && typeof regResp.data === 'object' ? regResp.data : {};
+          if (regResp.status === 404 || !reg.name) return json(res, { error: 'Not on the registry: ' + nameQ }, 404);
+          var latestTag = reg['dist-tags'] && reg['dist-tags'].latest;
+          var times = reg.time || {};
+          var versionsAll = Object.keys(reg.versions || {});
+          var repoUrl = reg.repository && (typeof reg.repository === 'string' ? reg.repository : reg.repository.url) || '';
+          repoUrl = repoUrl.replace(/^git\+/, '').replace(/\.git$/, '').replace(/^git:\/\//, 'https://').replace(/^ssh:\/\/git@/, 'https://');
+          var latestMeta = (reg.versions && reg.versions[latestTag]) || {};
+          json(res, { name: reg.name, description: reg.description || '', latest: latestTag, latestAt: times[latestTag] || null, created: times.created || null, modified: times.modified || null, versions: versionsAll.length,
+            recent: versionsAll.slice(-8).reverse().map(function (v) { return { version: v, at: times[v] || null, deprecated: !!(reg.versions[v] && reg.versions[v].deprecated) }; }),
+            license: reg.license || latestMeta.license || '', homepage: reg.homepage || '', repository: repoUrl, deprecated: latestMeta.deprecated || '', maintainers: (reg.maintainers || []).length, dependencies: Object.keys(latestMeta.dependencies || {}).length,
+            npmUrl: 'https://www.npmjs.com/package/' + nameQ });
+        } catch (e) { json(res, { error: e.message }, 502); }
+        return;
+      }
+
+      // ── 3.0: several packages in one go (safe updates, a chosen set) ────
+      var manyMatch = subpath.match(/^\/repos\/([^/]+)\/update-many$/);
+      if (manyMatch && method === 'POST') {
+        var repoNameM = decodeURIComponent(manyMatch[1]);
+        var reposM = getRepos(getConfig);
+        var repoM = reposM.find(function (r) { return r.name === repoNameM; });
+        if (!repoM) return json(res, { error: 'Repo not found' }, 404);
+        var bodyM = await readBody(req);
+        var list = Array.isArray(bodyM.packages) ? bodyM.packages.filter(function (x) { return x && x.name; }) : [];
+        if (!list.length) return json(res, { error: 'packages required' }, 400);
+        var spawnM = require('child_process').spawnSync;
+        var useYarnM = fs.existsSync(path.join(repoM.path, 'yarn.lock'));
+        var usePnpm = fs.existsSync(path.join(repoM.path, 'pnpm-lock.yaml'));
+        var pkgJsonM = {};
+        try { pkgJsonM = JSON.parse(fs.readFileSync(path.join(repoM.path, 'package.json'), 'utf8')); } catch (_) {}
+        var prod = [], dev = [];
+        for (var mi = 0; mi < list.length; mi++) {
+          var spec = list[mi].name + '@' + (list[mi].version || 'latest');
+          var isDevM = pkgJsonM.devDependencies && pkgJsonM.devDependencies[list[mi].name] && !(pkgJsonM.dependencies && pkgJsonM.dependencies[list[mi].name]);
+          (isDevM ? dev : prod).push(spec);
+        }
+        var exeM = useYarnM ? 'yarn' : usePnpm ? 'pnpm' : 'npm';
+        var results = [];
+        var runs = [];
+        if (prod.length) runs.push(useYarnM ? ['add'].concat(prod) : ['install'].concat(prod));
+        if (dev.length) runs.push(useYarnM ? ['add', '--dev'].concat(dev) : ['install', '--save-dev'].concat(dev));
+        for (var ri = 0; ri < runs.length; ri++) {
+          var r1 = spawnM(exeM, runs[ri], { cwd: repoM.path, encoding: 'utf8', timeout: 300000, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: process.platform === 'win32' });
+          results.push({ command: [exeM].concat(runs[ri]).join(' '), ok: !r1.error && r1.status === 0, output: ((r1.stdout || '') + (r1.stderr || '')).trim().slice(-1500) });
+        }
+        delete scanCache[repoNameM]; persistCache();
+        return json(res, { ok: results.every(function (x) { return x.ok; }), results: results, updated: list.length });
       }
 
       // ── Summary (plain text) ──────────────────────────────────────────

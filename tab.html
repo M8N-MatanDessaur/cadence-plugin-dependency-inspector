@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<script src="/plugins/sdk/symphonee-sdk.js"></script>
+<script src="/plugins/sdk/cadence-sdk.js"></script>
 <style>
   * { box-sizing: border-box; }
   ::-webkit-scrollbar { width: 7px; height: 7px; }
@@ -395,7 +395,7 @@ var AI_ACTIONS = [
     t: 'Full Audit',
     d: 'Scan all repos and generate a comprehensive dependency health report',
     fn: function() {
-      Symphonee.askAi(
+      Cadence.askAi(
         'Run a full dependency audit:\n'
         + '1. Scan all repos: curl -s -X POST http://127.0.0.1:3800/api/plugins/dependency-inspector/scan-all\n'
         + '2. Get the summary: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/summary\n'
@@ -410,7 +410,7 @@ var AI_ACTIONS = [
     t: 'Find Vulnerabilities',
     d: 'Scan repos and report all known security vulnerabilities',
     fn: function() {
-      Symphonee.askAi(
+      Cadence.askAi(
         'Scan all repos for vulnerabilities:\n'
         + '1. curl -s -X POST http://127.0.0.1:3800/api/plugins/dependency-inspector/scan-all\n'
         + '2. For each repo, check: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/REPO_NAME/vulnerabilities\n'
@@ -423,7 +423,7 @@ var AI_ACTIONS = [
     t: 'Generate Update Plan',
     d: 'Create a prioritized plan for updating outdated packages',
     fn: function() {
-      Symphonee.askAi(
+      Cadence.askAi(
         'Create a dependency update plan:\n'
         + '1. Scan all repos: curl -s -X POST http://127.0.0.1:3800/api/plugins/dependency-inspector/scan-all\n'
         + '2. For each repo, get outdated: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/REPO_NAME/outdated\n'
@@ -437,7 +437,7 @@ var AI_ACTIONS = [
     t: 'License Check',
     d: 'Audit all package licenses and flag non-compliant ones',
     fn: function() {
-      Symphonee.askAi(
+      Cadence.askAi(
         'Run a license compliance audit:\n'
         + '1. Scan all repos: curl -s -X POST http://127.0.0.1:3800/api/plugins/dependency-inspector/scan-all\n'
         + '2. For each repo, check licenses: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/REPO_NAME/licenses\n'
@@ -502,9 +502,9 @@ async function scanAll() {
   try {
     await fetch(API + '/scan-all', { method: 'POST' });
     await loadRepos();
-    Symphonee.toast('All repos scanned successfully', 'success');
+    Cadence.toast('All repos scanned successfully', 'success');
   } catch (e) {
-    Symphonee.toast('Scan failed: ' + e.message, 'error');
+    Cadence.toast('Scan failed: ' + e.message, 'error');
   }
   hideLoading();
   document.getElementById('btnScanAll').disabled = false;
@@ -540,7 +540,7 @@ function renderDashboard() {
   var repoGrid = document.getElementById('repoGrid');
   repoGrid.innerHTML = '';
   if (repos.length === 0) {
-    repoGrid.innerHTML = '<div class="empty-msg">No repos configured in Symphonee. Add repos in Settings.</div>';
+    repoGrid.innerHTML = '<div class="empty-msg">No repos configured in Cadence. Add repos in Settings.</div>';
     return;
   }
   for (var r = 0; r < repos.length; r++) {
@@ -651,11 +651,11 @@ async function scanCurrentRepo() {
     currentRepo.health = data.health;
     currentRepo.scannedAt = data.scannedAt;
     renderDetail();
-    Symphonee.toast(currentRepo.name + ' scanned', 'success');
+    Cadence.toast(currentRepo.name + ' scanned', 'success');
     // Also refresh the dashboard cache
     loadRepos();
   } catch (e) {
-    Symphonee.toast('Scan failed: ' + e.message, 'error');
+    Cadence.toast('Scan failed: ' + e.message, 'error');
   }
   hideLoading();
 }
@@ -966,7 +966,7 @@ function switchDetailTab(tab) {
 function aiAudit() {
   if (!currentRepo) return;
   var name = currentRepo.name;
-  Symphonee.askAi(
+  Cadence.askAi(
     'Run a full dependency audit for "' + name + '":\n'
     + '1. Scan: curl -s -X POST http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/' + encodeURIComponent(name) + '/scan\n'
     + '2. Get health: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/' + encodeURIComponent(name) + '/health\n'
@@ -980,7 +980,7 @@ function aiAudit() {
 function aiUpdatePlan() {
   if (!currentRepo) return;
   var name = currentRepo.name;
-  Symphonee.askAi(
+  Cadence.askAi(
     'Generate an update plan for "' + name + '":\n'
     + '1. Get outdated packages: curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/' + encodeURIComponent(name) + '/outdated\n'
     + '2. Create a prioritized markdown table with columns: Priority, Package, Current, Latest, Type, Notes.\n'
@@ -992,7 +992,7 @@ function aiUpdatePlan() {
 function aiLicenseCheck() {
   if (!currentRepo) return;
   var name = currentRepo.name;
-  Symphonee.askAi(
+  Cadence.askAi(
     'Run a license audit for "' + name + '":\n'
     + 'curl -s http://127.0.0.1:3800/api/plugins/dependency-inspector/repos/' + encodeURIComponent(name) + '/licenses\n'
     + 'Report any non-whitelisted licenses. Flag copyleft licenses (GPL, AGPL, LGPL) separately. Suggest alternatives for non-compliant packages if possible.'
@@ -1032,7 +1032,7 @@ async function updatePackage(btn) {
   var pkgName = btn.dataset.pkg;
   var version = btn.dataset.ver || 'latest';
   var repoName = currentRepo ? currentRepo.name : null;
-  if (!repoName) { Symphonee.toast('No repo selected', 'error'); return; }
+  if (!repoName) { Cadence.toast('No repo selected', 'error'); return; }
 
   btn.disabled = true;
   btn.textContent = 'Updating...';
@@ -1048,7 +1048,7 @@ async function updatePackage(btn) {
       btn.textContent = 'Done';
       btn.style.color = 'var(--green)';
       btn.style.borderColor = 'var(--green)';
-      Symphonee.toast(pkgName + ' updated to ' + version + '. Re-scanning...', 'success');
+      Cadence.toast(pkgName + ' updated to ' + version + '. Re-scanning...', 'success');
       // Re-scan the repo, then reload everything
       try {
         await fetch(API + '/repos/' + encodeURIComponent(repoName) + '/scan', { method: 'POST' });
@@ -1061,13 +1061,13 @@ async function updatePackage(btn) {
     } else {
       btn.textContent = 'Failed';
       btn.style.color = 'var(--red)';
-      Symphonee.toast('Failed: ' + (data.error || 'Unknown error'), 'error');
+      Cadence.toast('Failed: ' + (data.error || 'Unknown error'), 'error');
       setTimeout(function() { btn.textContent = 'Update'; btn.style.color = ''; btn.style.borderColor = ''; btn.disabled = false; }, 3000);
     }
   } catch (e) {
     btn.textContent = 'Error';
     btn.style.color = 'var(--red)';
-    Symphonee.toast('Error: ' + e.message, 'error');
+    Cadence.toast('Error: ' + e.message, 'error');
     setTimeout(function() { btn.textContent = 'Update'; btn.style.color = ''; btn.style.borderColor = ''; btn.disabled = false; }, 3000);
   }
 }
@@ -1085,7 +1085,7 @@ async function updatePackage(btn) {
 })();
 
 // Auto-refresh when tab becomes visible
-Symphonee.on('tabActivated', function(data) {
+Cadence.on('tabActivated', function(data) {
   if (data && data.tab && data.tab.indexOf('dependency-inspector') !== -1) {
     loadRepos();
   }

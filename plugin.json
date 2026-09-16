@@ -1,7 +1,7 @@
 {
   "id": "dependency-inspector",
   "name": "Dependency Inspector",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Scan repos for vulnerable, outdated, and unlicensed dependencies with health scoring",
   "icon": "shield-check",
   "tint": "34, 197, 94",
@@ -44,6 +44,151 @@
         "html": "tab.html"
       }
     ],
-    "routes": "routes.js"
-  }
+    "routes": "routes.js",
+    "surfaces": [
+      {
+        "id": "deps",
+        "title": "Dependencies",
+        "icon": "boxes",
+        "mount": "rail",
+        "entry": "ui/deps.js",
+        "sidebar": true,
+        "aside": true
+      }
+    ],
+    "scripts": [
+      {
+        "file": "Get-DependencyReport.ps1",
+        "label": "Dependency report",
+        "description": "Health and counts for every repository, plus duplicates.",
+        "args": []
+      },
+      {
+        "file": "Get-DependencySummary.ps1",
+        "label": "Plain-text summary",
+        "description": "The report as text.",
+        "args": []
+      },
+      {
+        "file": "Get-RepoDependencies.ps1",
+        "label": "Read a repository",
+        "description": "Packages, advisories, health and package manager of one repository.",
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          }
+        ]
+      },
+      {
+        "file": "Get-Vulnerabilities.ps1",
+        "label": "Vulnerabilities",
+        "description": "Advisories of one repository or the whole workspace, worst first.",
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository",
+            "default": ""
+          }
+        ]
+      },
+      {
+        "file": "Get-Outdated.ps1",
+        "label": "Outdated packages",
+        "description": "What is behind in one repository, by how far.",
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          },
+          {
+            "name": "Kind",
+            "label": "all | major | minor | patch",
+            "default": "all"
+          }
+        ]
+      },
+      {
+        "file": "Get-Licenses.ps1",
+        "label": "Licenses",
+        "description": "Licenses in one repository, or only the ones to look at.",
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          }
+        ]
+      },
+      {
+        "file": "Get-Duplicates.ps1",
+        "label": "Duplicates",
+        "description": "Same package, different versions, across repositories.",
+        "args": []
+      },
+      {
+        "file": "Get-PackageInfo.ps1",
+        "label": "Package info",
+        "description": "What the registry says about one package.",
+        "args": [
+          {
+            "name": "Name",
+            "label": "Package"
+          }
+        ]
+      },
+      {
+        "file": "Start-Scan.ps1",
+        "label": "Scan a repository",
+        "description": "Reads the manifest again and asks the registries.",
+        "mutates": true,
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          }
+        ]
+      },
+      {
+        "file": "Start-ScanAll.ps1",
+        "label": "Scan every repository",
+        "description": "Scans the whole workspace.",
+        "mutates": true,
+        "args": []
+      },
+      {
+        "file": "Update-Package.ps1",
+        "label": "Update a package",
+        "description": "Installs one package at a version.",
+        "mutates": true,
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          },
+          {
+            "name": "Name",
+            "label": "Package"
+          },
+          {
+            "name": "Version",
+            "label": "Version",
+            "default": "latest"
+          }
+        ]
+      },
+      {
+        "file": "Update-SafePackages.ps1",
+        "label": "Update the safe ones",
+        "description": "Minor and patch updates in one go; -IncludeMajor takes everything.",
+        "mutates": true,
+        "args": [
+          {
+            "name": "Repo",
+            "label": "Repository"
+          }
+        ]
+      }
+    ]
+  },
+  "sdkVersion": 3
 }

@@ -1,8 +1,8 @@
 <#
 .SYNOPSIS
-    Every repository: health, package count, vulnerabilities, outdated, license issues; plus cross-repo duplicates.
+    The same report as plain text, for a quick read.
 .EXAMPLE
-    ./scripts/Get-DependencyReport.ps1
+    ./scripts/Get-DependencySummary.ps1
 #>
 [CmdletBinding()]
 param(
@@ -16,4 +16,4 @@ function Get-Api($path) { Invoke-RestMethod -Uri "$CadenceApi$path" -Headers $he
 function Post-Api($path, $payload) { Invoke-RestMethod -Uri "$CadenceApi$path" -Method Post -Headers $headers -ContentType 'application/json' -Body ($payload | ConvertTo-Json -Depth 8) -TimeoutSec 600 }
 function Esc($s) { [uri]::EscapeDataString([string]$s) }
 function Out-Json($o, $d = 6) { ConvertTo-Json -InputObject $o -Depth $d }
-Get-Api '/api/plugins/dependency-inspector/overview' | ConvertTo-Json -Depth 6
+(Invoke-WebRequest -UseBasicParsing -Uri "$CadenceApi/api/plugins/dependency-inspector/summary" -Headers $headers -TimeoutSec 600).Content

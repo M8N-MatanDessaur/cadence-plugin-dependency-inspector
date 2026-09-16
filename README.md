@@ -1,4 +1,4 @@
-# Dependency Inspector -- Symphonee Plugin
+# Dependency Inspector -- Cadence Plugin
 
 Scans all configured repos for npm and NuGet dependency health. Shows vulnerabilities, outdated packages, license issues, and computes a health score per repo.
 
@@ -14,7 +14,7 @@ Scans all configured repos for npm and NuGet dependency health. Shows vulnerabil
 
 ## How It Works
 
-1. Reads the list of repos from Symphonee's main config (Settings > Repos)
+1. Reads the list of repos from Cadence's main config (Settings > Repos)
 2. For each repo, reads `package.json` and `package-lock.json` from disk
 3. Parses `.csproj` files for NuGet PackageReference elements
 4. Queries the npm registry API for latest versions and license info
@@ -23,7 +23,7 @@ Scans all configured repos for npm and NuGet dependency health. Shows vulnerabil
 
 ## Installation
 
-Copy this folder into `dashboard/plugins/` in your Symphonee installation:
+Copy this folder into `dashboard/plugins/` in your Cadence installation:
 
 ```
 dashboard/plugins/dependency-inspector/
@@ -36,11 +36,11 @@ dashboard/plugins/dependency-inspector/
   README.md
 ```
 
-Restart Symphonee. The plugin will appear as a "Dependencies" tab.
+Restart Cadence. The plugin will appear as a "Dependencies" tab.
 
 ## Configuration
 
-In Symphonee Settings > Plugins, you can configure:
+In Cadence Settings > Plugins, you can configure:
 
 - **npm Registry URL** -- Custom registry (defaults to https://registry.npmjs.org)
 - **Allowed Licenses** -- Comma-separated list of approved licenses (defaults to MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD)

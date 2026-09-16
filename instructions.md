@@ -1,6 +1,6 @@
 ## Dependency Inspector Plugin -- AI Instructions
 
-You have access to a Dependency Inspector plugin via the Symphonee API. This scans all configured repos for npm/NuGet dependency health -- vulnerabilities, outdated packages, license issues, and health scores.
+You have access to a Dependency Inspector plugin via the Cadence API. This scans all configured repos for npm/NuGet dependency health -- vulnerabilities, outdated packages, license issues, and health scores.
 
 **All routes are at** `http://127.0.0.1:3800/api/plugins/dependency-inspector/`
 
@@ -137,3 +137,22 @@ curl -s -X POST http://127.0.0.1:3800/api/ui/view-plugin \
 - NuGet packages are detected from `.csproj` files (PackageReference elements)
 - Vulnerability data comes from the npm audit bulk advisory API
 - License data is read from local `node_modules/` first, then falls back to the npm registry
+
+## In Cadence 3.0
+
+The routes are on the server that opened your shell: `$CADENCE_API/api/plugins/dependency-inspector/` (bash `$CADENCE_API`, PowerShell `$env:CADENCE_API`, fallback `http://127.0.0.1:3800`). GET routes are read-only; POST routes go through the permission gate and need the `x-cadence-token` header (the scripts attach it). The last scan of every repository is kept on disk, so the numbers are there after a restart.
+
+| Route | What |
+|---|---|
+| `GET /overview` | Every repository: health, packages, vulnerabilities by severity, outdated by kind, license issues, deprecated; totals; duplicates across repositories |
+| `GET /repos/<name>/detail` | One repository: every package (installed, latest, license, licenseOk, dev, deprecated, updateType), every advisory with its fix, health, manifest kind, package manager, path |
+| `GET /package?name=<pkg>` | Registry facts on one package: latest and when, versions, recent ones, repository, deprecation |
+| `POST /repos/<name>/scan` / `POST /scan-all` | Scan one repository or all of them |
+| `POST /repos/<name>/update {package, version}` | Install one package at a version with the repository's package manager |
+| `POST /repos/<name>/update-many {packages: [{name, version}]}` | Several at once (the UI's "Update safe") |
+
+### Scripts (PowerShell, from the Cadence directory)
+
+Read: `Get-DependencyReport` (overview), `Get-DependencySummary` (text), `Get-RepoDependencies -Repo`, `Get-Vulnerabilities [-Repo | -All]`, `Get-Outdated -Repo [-Kind major|minor|patch]`, `Get-Licenses -Repo [-Issues]`, `Get-Duplicates`, `Get-PackageInfo -Name`. Write (gated): `Start-Scan -Repo`, `Start-ScanAll`, `Update-Package -Repo -Name [-Version]`, `Update-SafePackages -Repo [-IncludeMajor]`.
+
+Rules for an AI: read the overview first, then one repository's detail; name packages and versions and give the exact install command for that repository's package manager; never run npm, yarn or pnpm yourself when the user has not asked for an install; a scan is cheap and safe, an update changes the lock file.
