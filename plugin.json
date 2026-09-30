@@ -188,7 +188,8 @@
           }
         ]
       }
-    ]
+    ],
+    "sealConfig": true
   },
   "sdkVersion": 3
 }

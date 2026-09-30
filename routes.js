@@ -10,6 +10,12 @@ const https = require('https');
 
 const configPath = path.join(__dirname, 'config.json');
 
+// Cadence reads and writes this file for the plugin (ctx.pluginConfig): sealed at rest, so the
+// secrets in it are not in the clear on disk. On a Cadence without it, the file as before.
+let cfgIO = null;
+function readConfigFile() { return cfgIO ? cfgIO.read() : JSON.parse(fs.readFileSync(configPath, 'utf8')); }
+function writeConfigFile(data) { if (cfgIO) cfgIO.write(data); else fs.writeFileSync(configPath, JSON.stringify(data, null, 2), 'utf8'); }
+
 // ── In-memory scan cache ────────────────────────────────────────────────────
 
 var scanCache = {};  // { repoName: { timestamp, data } }
@@ -23,12 +29,12 @@ function persistCache() { try { fs.writeFileSync(cacheFile, JSON.stringify(scanC
 // ── Config helpers ──────────────────────────────────────────────────────────
 
 function getPluginConfig() {
-  try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); }
+  try { return readConfigFile(); }
   catch (_) { return { npmRegistryUrl: '', licenseWhitelist: 'MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD' }; }
 }
 
 function savePluginConfig(data) {
-  fs.writeFileSync(configPath, JSON.stringify(data, null, 2), 'utf8');
+  writeConfigFile(data);
 }
 
 function getRegistryUrl() {
@@ -568,7 +574,8 @@ async function __attentionHandler(req, res, url, compute, json) {
   return json(res, out);
 }
 
-module.exports = function ({ addRoute, addPrefixRoute, json, readBody, getConfig }) {
+module.exports = function ({ addRoute, addPrefixRoute, json, readBody, getConfig, pluginConfig }) {
+  cfgIO = pluginConfig || null;
   addRoute('GET', '/attention', (req, res, url) => __attentionHandler(req, res, url, async (req) => { const o = await __selfGet(req, '/api/plugins/dependency-inspector/overview'); const t = o && o.totals; if (!t) return []; const out = []; if (t.critical) out.push({ level: 'error', text: `${t.critical} critical vulnerabilit${t.critical === 1 ? 'y' : 'ies'}.` }); if (t.high) out.push({ level: 'error', text: `${t.high} high vulnerabilit${t.high === 1 ? 'y' : 'ies'}.` }); if (t.moderate) out.push({ level: 'warn', text: `${t.moderate} moderate vulnerabilit${t.moderate === 1 ? 'y' : 'ies'}.` }); if (t.deprecated) out.push({ level: 'warn', text: `${t.deprecated} deprecated package${t.deprecated === 1 ? '' : 's'}.` }); if (t.licenseIssues) out.push({ level: 'info', text: `${t.licenseIssues} license issue${t.licenseIssues === 1 ? '' : 's'}.` }); return out; }, json));
 
   addPrefixRoute(async (req, res, url, subpath) => {
